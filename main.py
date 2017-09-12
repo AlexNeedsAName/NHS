@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+import json
 import gspread
 import sys
 import httplib2
 import googleapiclient.discovery
 import googleapiclient.http
 import time
+import csv
 from oauth2client.service_account import ServiceAccountCredentials
 from collections import namedtuple
 
@@ -13,7 +15,29 @@ Entry = namedtuple('Entry', ['date', 'task', 'hours', 'contact', 'photo'])
 REQUIRED_IN_HOURS = 10
 REQUIRED_OUT_HOURS = 10
 
-ADMIN_EMAILS = ["SCHMITZP@slcs.us", "martiale002@slyon.us", "churcsam000@slyon.us", "adamsbro000@slyon.us", "renehfal000@slyon.us", "aulicnat000@slyon.us", "pavlicia000@slyon.us"]
+USER_SHEET_TITLE = "{full_name}'s Hours"
+USER_WELCOME_MESSAGE = "Hi {first_name}, this is the spreadsheet you can use to view your logged hours. Please save this to your school gmail's google drive. Please allow for up to 24 hours for new activities to appear."
+USER_SHEET_FIRST_ROW = 3
+
+with open('config.json', 'r') as f:
+	CONFIG = json.load(f)
+
+class Person:
+	def __init__(self, email):
+		self.email = email
+		self.in_hours = Hours(REQUIRED_IN_HOURS)
+		self.out_hours = Hours(REQUIRED_OUT_HOURS)
+		try:
+			self.name = names[email]
+		except KeyError:
+			self.name = email
+
+	def addHours(self, row):
+		if(row['Type of Hours'] == 'In Hours'):
+			hours = self.in_hours
+		else:
+			hours = self.out_hours
+		hours.addEntry(row)
 
 class Hours:
 	def __init__(self, required_hours):
@@ -53,21 +77,15 @@ class Hours:
 			remaining = 0
 		return remaining
 
-class Person:
-	def __init__(self, email):
-		self.email = email
-		self.in_hours = Hours(REQUIRED_IN_HOURS)
-		self.out_hours = Hours(REQUIRED_OUT_HOURS)
-
-	def addHours(self, row):
-		if(row['Type of Hours'] == 'In Hours'):
-			hours = self.in_hours
-		else:
-			hours = self.out_hours
-		hours.addEntry(row)
-
 def updateOverview(person, worksheet, i, hide_detail=False):
-	person_data = [person.email, person.in_hours.getTotal(), person.in_hours.getRemaining(), person.out_hours.getTotal(), person.out_hours.getRemaining(), "https://docs.google.com/spreadsheets/d/{id}".format(id=sheet.id)]
+	person_data = [ person.email,
+	                person.in_hours.getTotal(),
+	                person.in_hours.getRemaining(),
+	                person.out_hours.getTotal(),
+	                person.out_hours.getRemaining(),
+	                "https://docs.google.com/spreadsheets/d/{id}".format(id=sheet.id),
+	]
+
 	if(hide_detail):
 		row = worksheet.range('A{0}:E{0}'.format(i))
 	else:
@@ -75,6 +93,19 @@ def updateOverview(person, worksheet, i, hide_detail=False):
 	for cell,value in zip(row,person_data):
 		cell.value = value
 	worksheet.update_cells(row)
+
+def createNewSheet(person):
+	id = client.open("Template").id
+	copied_file = {"title": USER_SHEET_TITLE.format(full_name=person.name)}
+	drive_service.files().copy(fileId=id, body=copied_file).execute()
+	print("Created new sheet for {}".format(person.name))
+
+def shareNewSheet(person):
+	sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
+	sheet.share(person.email, perm_type='user', role='reader', email_message=USER_WELCOME_MESSAGE.format(first_name=person.name.split(' ')[0]))
+	for email in CONFIG["ADMIN_EMAILS"]:
+		sheet.share(email, perm_type='user', role='reader', notify=False)
+	print("Shared new sheet for {}".format(person.name))
 
 # use creds to create a client to interact with the Google Drive API
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -91,6 +122,11 @@ spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
 responses = spreadsheet.worksheet("Responses")
 overview = spreadsheet.worksheet("Overview")
 
+# read the database of people and their emails
+with open('people.csv', mode='r') as file:
+	reader = csv.reader(file)
+	names = dict(reader)
+
 # Extract the emails of each person
 people = {}
 data = responses.get_all_records()
@@ -101,31 +137,32 @@ for row in data:
 	people[email].addHours(row)
 print("Parsed all {} entries for {} users".format(len(data), len(people)))
 
+#We're done with the dict of all emails and names now. We have the ones we need.
+del names
+
 # Create, update, and share individual sheets for each user.
-for i,person in enumerate(people):
-	i+=3
-	name = person.replace("@slyon.us", '')
-	person = people[person]
+for i,email in enumerate(people):
+	i+=USER_SHEET_FIRST_ROW
+	person = people[email]
 
-	#Get detail sheet
+	#Get user's sheet
 	try:
-		sheet = client.open("{}'s Hours".format(name))
+		sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
 	except gspread.exceptions.SpreadsheetNotFound:
-		id = client.open("Template").id
-		copied_file = {"title": "{}'s Hours".format(name)}
-		drive_service.files().copy(fileId=id, body=copied_file).execute()
-		sheet = client.open("{}'s Hours".format(name))
-		sheet.share(person.email, perm_type='user', role='reader', email_message="Hi, this is the spreadsheet you can use to view your logged hours. It will be updated every day at midnight.")
-		for email in ADMIN_EMAILS:
-			sheet.share(email, perm_type='user', role='reader', notify=False)
-		print("Created and shared new Sheet for {}".format(name))
+		createNewSheet(person)
+		shareNewSheet(person)
+
+	#Update In Hours
 	in_hours = sheet.worksheet("In Hours")
-	out_hours = sheet.worksheet("Out Hours")
-	personal_overview = sheet.worksheet("Overview")
-
 	person.in_hours.update(in_hours)
-	person.out_hours.update(out_hours)
-	updateOverview(person, overview, i)
-	updateOverview(person, personal_overview, 3, hide_detail=True)
 
-	print("Done updating {}'s hours".format(name))
+	#Update Out Hours
+	out_hours = sheet.worksheet("Out Hours")
+	person.out_hours.update(out_hours)
+
+	#Update personal overview and the main overview
+	personal_overview = sheet.worksheet("Overview")
+	updateOverview(person, personal_overview, 3, hide_detail=True)
+	updateOverview(person, overview, i)
+
+	print("Done updating {}'s hours".format(person.name))
