@@ -16,7 +16,7 @@ REQUIRED_IN_HOURS = 10
 REQUIRED_OUT_HOURS = 10
 
 USER_SHEET_TITLE = "{full_name}'s Hours"
-USER_WELCOME_MESSAGE = "Hi {first_name}, this is the spreadsheet you can use to view your logged hours. Please save this to your school gmail's google drive. Please allow for up to 24 hours for new activities to appear."
+USER_WELCOME_MESSAGE = "Hi {first_name}, this is the spreadsheet you can use to view your logged hours. Please save this to your school account's Google Drive. Please allow for up to 24 hours for new activities to appear."
 USER_SHEET_FIRST_ROW = 3
 
 with open('config.json', 'r') as f:
@@ -79,6 +79,7 @@ class Hours:
 
 def updateOverview(person, worksheet, i, hide_detail=False):
 	person_data = [ person.email,
+					person.name,
 	                person.in_hours.getTotal(),
 	                person.in_hours.getRemaining(),
 	                person.out_hours.getTotal(),
@@ -87,9 +88,9 @@ def updateOverview(person, worksheet, i, hide_detail=False):
 	]
 
 	if(hide_detail):
-		row = worksheet.range('A{0}:E{0}'.format(i))
-	else:
 		row = worksheet.range('A{0}:F{0}'.format(i))
+	else:
+		row = worksheet.range('A{0}:G{0}'.format(i))
 	for cell,value in zip(row,person_data):
 		cell.value = value
 	worksheet.update_cells(row)
@@ -106,6 +107,7 @@ def shareNewSheet(person):
 	for email in CONFIG["ADMIN_EMAILS"]:
 		sheet.share(email, perm_type='user', role='reader', notify=False)
 	print("Shared new sheet for {}".format(person.name))
+	return sheet
 
 # use creds to create a client to interact with the Google Drive API
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -150,7 +152,7 @@ for i,email in enumerate(people):
 		sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
 	except gspread.exceptions.SpreadsheetNotFound:
 		createNewSheet(person)
-		shareNewSheet(person)
+		sheet = shareNewSheet(person)
 
 	#Update In Hours
 	in_hours = sheet.worksheet("In Hours")
