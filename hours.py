@@ -31,14 +31,11 @@ def writeConfig(CONFIG):
 CONFIG = readConfig()
 
 class Person:
-	def __init__(self, email):
+	def __init__(self, email, name):
 		self.email = email
+		self.name = name
 		self.in_hours = Hours(REQUIRED_IN_HOURS)
 		self.out_hours = Hours(REQUIRED_OUT_HOURS)
-		try:
-			self.name = names[email]
-		except KeyError:
-			self.name = email
 
 	def addHours(self, row):
 		if(row['Type of Hours'] == 'In Hours'):
@@ -46,6 +43,9 @@ class Person:
 		else:
 			hours = self.out_hours
 		hours.addEntry(row)
+
+	def getRemaining(self):
+		return self.in_hours.getRemaining() + self.out_hours.getRemaining()
 
 class Hours:
 	def __init__(self, required_hours):
@@ -85,14 +85,14 @@ class Hours:
 			remaining = 0
 		return remaining
 
-def updateOverview(person, worksheet, i, hide_detail=False):
+def updateOverview(person, worksheet, spreadsheet, i, hide_detail=False):
 	person_data = [ person.email,
 					person.name,
 	                person.in_hours.getTotal(),
 	                person.in_hours.getRemaining(),
 	                person.out_hours.getTotal(),
 	                person.out_hours.getRemaining(),
-	                "https://docs.google.com/spreadsheets/d/{id}".format(id=sheet.id),
+	                "https://docs.google.com/spreadsheets/d/{id}".format(id=spreadsheet.id),
 	]
 
 	if(hide_detail):
@@ -118,7 +118,7 @@ def shareNewSheet(person):
 	return sheet
 
 
-def process():
+def process(force=False):
 	# use creds to create a client to interact with the Google Drive API
 	scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 	creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
@@ -143,24 +143,26 @@ def process():
 	people = {}
 	data = responses.get_all_records()
 
-	if(len(data) <= CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"]):
+	if((not force) and (len(data) <= CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"])):
 		print("No new entries")
 		sys.exit(0)
 
 	for row in data:
 		email = row["Email Address"]
 		if(email not in people.keys()):
-			people[email] = Person(email)
+			people[email] = Person(email, names[email])
 		people[email].addHours(row)
 	print("Parsed all {} entries for {} users".format(len(data), len(people)))
 
 	#We're done with the dict of all emails and names now. We have the ones we need.
 	del names
 
+	#Sort people by hours left
+	people = sorted(people.values(), key=lambda person: person.getRemaining())
+
 	# Create, update, and share individual sheets for each user.
-	for i,email in enumerate(people):
+	for i,person in enumerate(people):
 		i+=USER_SHEET_FIRST_ROW
-		person = people[email]
 
 		#Get user's sheet
 		try:
@@ -179,8 +181,8 @@ def process():
 
 		#Update personal overview and the main overview
 		personal_overview = sheet.worksheet("Overview")
-		updateOverview(person, personal_overview, 3, hide_detail=True)
-		updateOverview(person, overview, i)
+		updateOverview(person, personal_overview, sheet, 3, hide_detail=True)
+		updateOverview(person, overview, sheet, i)
 
 		print("Done updating {}'s hours".format(person.name))
 
