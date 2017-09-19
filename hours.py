@@ -19,8 +19,16 @@ USER_SHEET_TITLE = "{full_name}'s Hours"
 USER_WELCOME_MESSAGE = "Hi {first_name}, this is the spreadsheet you can use to view your logged hours. Please save this to your school account's Google Drive. Please allow for up to 24 hours for new activities to appear."
 USER_SHEET_FIRST_ROW = 3
 
-with open('config.json', 'r') as f:
-	CONFIG = json.load(f)
+def readConfig():
+	with open('config.json', 'r') as f:
+		CONFIG = json.load(f)
+	return CONFIG
+
+def writeConfig(CONFIG):
+	with open('config.json', 'w') as f:
+		f.write(json.dumps(CONFIG, indent=4))
+
+CONFIG = readConfig()
 
 class Person:
 	def __init__(self, email):
@@ -104,67 +112,80 @@ def createNewSheet(person):
 def shareNewSheet(person):
 	sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
 	sheet.share(person.email, perm_type='user', role='reader', email_message=USER_WELCOME_MESSAGE.format(first_name=person.name.split(' ')[0]))
-	for email in CONFIG["ADMIN_EMAILS"]:
+	for email in CONFIG["HOURS"]["ADMIN_EMAILS"]:
 		sheet.share(email, perm_type='user', role='reader', notify=False)
 	print("Shared new sheet for {}".format(person.name))
 	return sheet
 
-# use creds to create a client to interact with the Google Drive API
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
-client = gspread.authorize(creds)
 
-# Create an instance of google drive service
-http = httplib2.Http()
-creds.authorize(http)
-drive_service = googleapiclient.discovery.build('drive', 'v2', http=http)
+def process():
+	# use creds to create a client to interact with the Google Drive API
+	scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+	creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
+	client = gspread.authorize(creds)
 
-# Find a Sheet by name and open the first sheet
-spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
-responses = spreadsheet.worksheet("Responses")
-overview = spreadsheet.worksheet("Overview")
+	# Create an instance of google drive service
+	http = httplib2.Http()
+	creds.authorize(http)
+	drive_service = googleapiclient.discovery.build('drive', 'v2', http=http)
 
-# read the database of people and their emails
-with open('people.csv', mode='r') as file:
-	reader = csv.reader(file)
-	names = dict(reader)
+	# Find a Sheet by name and open the first sheet
+	spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
+	responses = spreadsheet.worksheet("Responses")
+	overview = spreadsheet.worksheet("Overview")
 
-# Extract the emails of each person
-people = {}
-data = responses.get_all_records()
-for row in data:
-	email = row["Email Address"]
-	if(email not in people.keys()):
-		people[email] = Person(email)
-	people[email].addHours(row)
-print("Parsed all {} entries for {} users".format(len(data), len(people)))
+	# read the database of people and their emails
+	with open('people.csv', mode='r') as file:
+		reader = csv.reader(file)
+		names = dict(reader)
 
-#We're done with the dict of all emails and names now. We have the ones we need.
-del names
+	# Extract the emails of each person
+	people = {}
+	data = responses.get_all_records()
 
-# Create, update, and share individual sheets for each user.
-for i,email in enumerate(people):
-	i+=USER_SHEET_FIRST_ROW
-	person = people[email]
+	if(len(data) <= CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"]):
+		print("No new entries")
+		sys.exit(0)
 
-	#Get user's sheet
-	try:
-		sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
-	except gspread.exceptions.SpreadsheetNotFound:
-		createNewSheet(person)
-		sheet = shareNewSheet(person)
+	for row in data:
+		email = row["Email Address"]
+		if(email not in people.keys()):
+			people[email] = Person(email)
+		people[email].addHours(row)
+	print("Parsed all {} entries for {} users".format(len(data), len(people)))
 
-	#Update In Hours
-	in_hours = sheet.worksheet("In Hours")
-	person.in_hours.update(in_hours)
+	#We're done with the dict of all emails and names now. We have the ones we need.
+	del names
 
-	#Update Out Hours
-	out_hours = sheet.worksheet("Out Hours")
-	person.out_hours.update(out_hours)
+	# Create, update, and share individual sheets for each user.
+	for i,email in enumerate(people):
+		i+=USER_SHEET_FIRST_ROW
+		person = people[email]
 
-	#Update personal overview and the main overview
-	personal_overview = sheet.worksheet("Overview")
-	updateOverview(person, personal_overview, 3, hide_detail=True)
-	updateOverview(person, overview, i)
+		#Get user's sheet
+		try:
+			sheet = client.open(USER_SHEET_TITLE.format(full_name=person.name))
+		except gspread.exceptions.SpreadsheetNotFound:
+			createNewSheet(person)
+			sheet = shareNewSheet(person)
 
-	print("Done updating {}'s hours".format(person.name))
+		#Update In Hours
+		in_hours = sheet.worksheet("In Hours")
+		person.in_hours.update(in_hours)
+
+		#Update Out Hours
+		out_hours = sheet.worksheet("Out Hours")
+		person.out_hours.update(out_hours)
+
+		#Update personal overview and the main overview
+		personal_overview = sheet.worksheet("Overview")
+		updateOverview(person, personal_overview, 3, hide_detail=True)
+		updateOverview(person, overview, i)
+
+		print("Done updating {}'s hours".format(person.name))
+
+	CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"] = len(data)
+	writeConfig(CONFIG)
+
+if(__name__ == "__main__"):
+	process()
