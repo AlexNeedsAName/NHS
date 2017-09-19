@@ -1,6 +1,15 @@
 {
-	"ADMIN_EMAILS": [
-		"user@example.com"
-	]
+    "HOURS": {
+        "ADMIN_EMAILS": [
+            "user@example.com",
+            "user2@example.com",
+        ],
+        "LAST_CHECKED_ENTRIES": 0
+    },
+    "ATTENDANCE": {
+        "FORM_ID": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "EMAIL": "entry.AAAAAAAAAA",
+        "DATE": "entry.BBBBBBBBBB",
+        "STATE": "entry.CCCCCCCCCC"
+    }
 }
-
