@@ -85,6 +85,19 @@ class Hours:
 			remaining = 0
 		return remaining
 
+def connectGoogle():
+	global client, drive_service
+
+	# use creds to create a client to interact with the Google Drive API
+	scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+	creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
+	client = gspread.authorize(creds)
+
+	# Create an instance of google drive service
+	http = httplib2.Http()
+	creds.authorize(http)
+	drive_service = googleapiclient.discovery.build('drive', 'v2', http=http)
+
 def updateOverview(person, worksheet, spreadsheet, i, hide_detail=False):
 	person_data = [ person.email,
 					person.name,
@@ -119,16 +132,6 @@ def shareNewSheet(person):
 
 
 def process(force=False):
-	# use creds to create a client to interact with the Google Drive API
-	scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-	creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
-	client = gspread.authorize(creds)
-
-	# Create an instance of google drive service
-	http = httplib2.Http()
-	creds.authorize(http)
-	drive_service = googleapiclient.discovery.build('drive', 'v2', http=http)
-
 	# Find a Sheet by name and open the first sheet
 	spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
 	responses = spreadsheet.worksheet("Responses")
@@ -190,4 +193,8 @@ def process(force=False):
 	writeConfig(CONFIG)
 
 if(__name__ == "__main__"):
-	process()
+	try:
+		connectGoogle()
+		process()
+	except httplib2.ServerNotFoundError:
+		print("Offline")
