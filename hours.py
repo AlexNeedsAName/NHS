@@ -143,18 +143,26 @@ def process(force=False):
 		names = dict(reader)
 
 	# Extract the emails of each person
-	people = {}
 	data = responses.get_all_records()
 
-	if((not force) and (len(data) <= CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"])):
+	last_checked = CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"]
+	if((not force) and (len(data) <= last_checked)):
 		print("No new entries")
 		sys.exit(0)
 
+	updatedPeople = []
+	for row in data[last_checked:]:
+		email = row["Email Address"]
+		if(email not in updatedPeople):
+			updatedPeople.append(email)
+
+	people = {}
 	for row in data:
 		email = row["Email Address"]
-		if(email not in people.keys()):
-			people[email] = Person(email, names[email])
-		people[email].addHours(row)
+		if(email in updatedPeople or force):
+			if(email not in people.keys()):
+				people[email] = Person(email, names[email])
+			people[email].addHours(row)
 	print("Parsed all {} entries for {} users".format(len(data), len(people)))
 
 	#We're done with the dict of all emails and names now. We have the ones we need.
