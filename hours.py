@@ -132,8 +132,13 @@ def shareNewSheet(person):
 
 
 def process(force=False):
+	sheets = {}
+	for sheet in  client.openall():
+		sheets[sheet.title] = sheet
+
 	# Find a Sheet by name and open the first sheet
-	spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
+#	spreadsheet = client.open("SLEHS NHS Hour Submission (Responses)")
+	spreadsheet = sheets["SLEHS NHS Hour Submission (Responses)"]
 	responses = spreadsheet.worksheet("Responses")
 	overview = spreadsheet.worksheet("Overview")
 
@@ -159,10 +164,9 @@ def process(force=False):
 	people = {}
 	for row in data:
 		email = row["Email Address"]
-		if(email in updatedPeople or force):
-			if(email not in people.keys()):
-				people[email] = Person(email, names[email])
-			people[email].addHours(row)
+		if(email not in people.keys()):
+			people[email] = Person(email, names[email])
+		people[email].addHours(row)
 	print("Parsed all {} entries for {} users".format(len(data), len(people)))
 
 	#We're done with the dict of all emails and names now. We have the ones we need.
@@ -182,20 +186,18 @@ def process(force=False):
 			createNewSheet(person)
 			sheet = shareNewSheet(person)
 
-		#Update In Hours
-		in_hours = sheet.worksheet("In Hours")
-		person.in_hours.update(in_hours)
-
-		#Update Out Hours
-		out_hours = sheet.worksheet("Out Hours")
-		person.out_hours.update(out_hours)
-
-		#Update personal overview and the main overview
-		personal_overview = sheet.worksheet("Overview")
-		updateOverview(person, personal_overview, sheet, 3, hide_detail=True)
+		#Update the main overview sheet
 		updateOverview(person, overview, sheet, i)
 
-		print("Done updating {}'s hours".format(person.name))
+		#Update the person's sheet if they have a new entry
+		if(person.email in updatedPeople or force):
+			in_hours = sheet.worksheet("In Hours")
+			out_hours = sheet.worksheet("Out Hours")
+			personal_overview = sheet.worksheet("Overview")
+			person.in_hours.update(in_hours)
+			person.out_hours.update(out_hours)
+			updateOverview(person, personal_overview, sheet, 3, hide_detail=True)
+			print("Done updating {}'s hours".format(person.name))
 
 	CONFIG["HOURS"]["LAST_CHECKED_ENTRIES"] = len(data)
 	writeConfig(CONFIG)
