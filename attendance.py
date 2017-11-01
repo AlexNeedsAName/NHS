@@ -11,6 +11,7 @@ import googleapiclient.http
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime
 import serial
+import argparse
 
 START = b'\x02'
 END =   b'\x03'
@@ -32,6 +33,12 @@ def readConfig():
 	return CONFIG
 
 CONFIG = readConfig()
+
+class MyParser(argparse.ArgumentParser):
+	def error(self, message):
+		print("error: " + message)
+		self.print_help()
+		sys.exit(2)
 
 class scanner:
 	def __init__(self, serial_port="/dev/cu.SLAB_USBtoUART", debounce_delay=.2):
@@ -109,15 +116,15 @@ def takeAttendance():
 		print("Welcome, {}\n".format(name))
 		mark(email, 'P', datetime.date.today())
 
-def manual():
+def manual(state='P'):
 	while(True):
 		valid = False
 		while(not valid):
-			email = input("Email: ")
-			valid = (email.lower() in (key.lower() for key in names.keys()))
+			email = input("Email: ").lower()
+			valid = (email in (key.lower() for key in names.keys()))
 			if(not valid):
 				print("Invalid school email.")
-		mark(email, 'P', datetime.date.today())
+		mark(email, state, datetime.date.today())
 
 def updateOldEntries():
 	while(True):
@@ -145,6 +152,7 @@ def register(id):
 		f.write("{},{}\n".format(id,email))
 
 def process():
+	print("Reading Responses...")
 	# Login to  google sheets
 	scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 	creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
@@ -155,23 +163,25 @@ def process():
 	responses = spreadsheet.worksheet("Responses")
 	overview = spreadsheet.worksheet("Overview")
 
-	#First get the meetings and have the ones in the past default to Absent
+	#Put the read functions first and together because they take a long time.
+	data = responses.get_all_records()
 	meetings = dict((date,'') for date in overview.row_values(1)[1:])
+
+	print("Processing Data...")
+
+	#First get the meetings and have the ones in the past default to Absent
 	today = datetime.date.today()
 	for meeting in meetings:
 		try:
 			month, day, year = [ int(s) for s in meeting.split('/') ]
 			meeting_date = datetime.date(year, month, day)
-			print(meeting_date)
-			if(meeting_date <= today):
-				print(True)
+			if(meeting_date < today):
 				meetings[meeting] = 'A'
 		except ValueError: #Not a meeting, some other header
 			pass
 
 	# Create an dict for each person and fill it's data
 	people = {}
-	data = responses.get_all_records()
 
 	for row in data:
 		email = row["Student Email"]
@@ -192,25 +202,41 @@ def process():
 
 	print("Processed data. Updating spreadsheet...")
 
+	last_cell = gspread.utils.rowcol_to_a1(overview.row_count,overview.col_count)
+	cell_list = overview.range('A2:{}'.format(last_cell))
+
+	rows = [cell_list[x:x+overview.col_count] for x in range(0, len(cell_list), overview.col_count)]
+
+	FIRST_ROW = overview.row_values(1)
+
 	# Update the sheet
-	n = len(people)
 	people = sorted(people.values(), key=lambda k: k['Name'])
-	for i,person in enumerate(people):
-		print("Updating {} of {}\r".format(i+1,n))
-		i+=2
+	for r,person in enumerate(people):
 		for key in KEYS:
 			person[key] = list(person.values()).count(key)
-		fillRow(overview, i, person)
+		for c,key in enumerate(FIRST_ROW):
+			rows[r][c].value = person[key]
+	overview.update_cells(cell_list)
 
 if(__name__ == "__main__"):
-#	process()
+	parser = MyParser(description='A script for mannaging the attendance of an orginization or a class.')
+	parser.add_argument("-m", "--manual", action='store_true', help="Take manual attendance.")
+	parser.add_argument("-e", "--excuse", action='store_true', help="Take manual attendance.")
+	parser.add_argument("-t", "--take",   action='store_true', help="Take attendance normally")
+	parser.add_argument("-u", "--update", action='store_true', help="Update older entries")
+	args = parser.parse_args()
 
 	try:
-		updateOldEntries()
-#		manual()
-#		takeAttendance()
+		if(args.update):
+			updateOldEntries()
+		elif(args.manual):
+			manual()
+		elif(args.excuse):
+			manual(state='E')
+		elif(args.take):
+			takeAttendance()
 	except KeyboardInterrupt:
-		print("\nProcessing data...")
-		process()
-		print("Done!")
+		print("\n")
+	process()
+	print("Done!")
 
